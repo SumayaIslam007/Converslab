@@ -1,5 +1,7 @@
 import {createRoot, useState, useEffect} from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
+import { createNote, updateNote } from './api/notes';
+import {useNotes} from './hooks/useNotes';
 
 apiFetch.use(apiFetch.createNonceMiddleware(converselabSettings.nonce));
 
@@ -37,29 +39,19 @@ const NoteForm = ({ onNoteSaved, editingNote, onCancelEdit }) => {
 
         setIsSubmitting(true);
 
-        const isUpdating = !!editingNote;
-        const targetUrl = isUpdating 
-            ? `${converselabSettings.restUrl}/${editingNote.id}` // PUT to /notes/{id}
-            : converselabSettings.restUrl;                       // POST to /notes
-        
-        const targetMethod = isUpdating ? 'PUT' : 'POST';
+        const apiCall = editingNote ? updateNote(editingNote.id, formData) : createNote(formData);
 
-        apiFetch({
-            url: targetUrl,
-            method: targetMethod,
-            data: formData,
-        })
-        .then(() =>{
-            setFormData(defaultState);
-            setIsSubmitting(false);
-            onNoteSaved();
-            if (isUpdating) onCancelEdit();
-        })
-        .catch((err) => {
-            //console.error('API Error:', err);
-            setErrors({ server: err.message || 'Server rejected the note. Check your fields.' });
-            setIsSubmitting(false);
-        });
+        apiCall
+            .then(() => {
+                setFormData(defaultState);
+                setIsSubmitting(false);
+                onNoteSaved();
+                if (editingNote) onCancelEdit();
+            })
+            .catch((err) => {
+                setErrors({ server: err.message || 'Server rejected the note.' });
+                setIsSubmitting(false);
+            });
     };
 
     return (
@@ -117,59 +109,10 @@ const NoteForm = ({ onNoteSaved, editingNote, onCancelEdit }) => {
     );
 };
 
-const NotesList =({refreshTrigger, onEditClick, onNoteDeleted})=>{
-    const [notes, setNotes]=useState([]);
-    const [isLoading, setIsLoading]=useState(true);
-    const [error, setError] = useState(null);
-
-
-useEffect(()=>{
-    setIsLoading(true);
-    apiFetch({url: converselabSettings.restUrl})
-    .then((data)=>{
-        setNotes(data);
-        setIsLoading(false);
-    })
-    .catch((err)=>{
-        // console.error('API Error:',err);
-        setError(err.message || 'AN error occured');
-        setIsLoading(false);     
-    });
-},[refreshTrigger]);
-
-const handleDelete = (id) => {
-        if (!window.confirm('Are you absolutely sure you want to delete this note?')) {
-            return;
-        }
-
-        apiFetch({
-            url: `${converselabSettings.restUrl}/${id}`,
-            method: 'DELETE'
-        })
-        .then(() => onNoteDeleted())
-        .catch((err) => alert('Failed to delete: ' + err.message));
-    };
-
-if (isLoading) {
-        return <p>Loading your Converselab notes...</p>;
-    }
-    
-    // 2. Error State
-    if (error) {
-        return (
-            <div className="notice notice-error inline">
-                <p><strong>Error:</strong> {error}</p>
-            </div>
-        );
-    }
-
-if (notes.length === 0) {
-        return (
-            <div className="notice notice-info inline">
-                <p>No notes found in the database. Time to create your first one!</p>
-            </div>
-        );
-    }
+const NotesList = ({ notes, isLoading, error, onEditClick, onNoteDeleted }) => {
+    if (isLoading) return <p>Loading your Converselab notes...</p>;
+    if (error) return <div className="notice notice-error inline"><p><strong>Error:</strong> {error}</p></div>;
+    if (notes.length === 0) return <div className="notice notice-info inline"><p>No notes found in the database. Time to create your first one!</p></div>;
     
     return (
         <table className="wp-list-table widefat fixed striped table-view-list">
@@ -211,10 +154,9 @@ if (notes.length === 0) {
 };
 
 const App = () => {
-    const [refreshCount, setRefreshCount] = useState(0);
-    const [editingNote, setEditingNote]=useState(null);
-
-    const triggerRefresh=()=> setRefreshCount(refreshCount+1);
+    // Uses our new custom hook!
+    const { notes, isLoading, error, refreshNotes, removeNote } = useNotes();
+    const [editingNote, setEditingNote] = useState(null);
 
     return (
         <div className="wrap">
@@ -222,14 +164,16 @@ const App = () => {
             <hr className="wp-header-end" />
             
             <NoteForm 
-                onNoteSaved={triggerRefresh} 
+                onNoteSaved={refreshNotes} 
                 editingNote={editingNote} 
                 onCancelEdit={() => setEditingNote(null)} 
             />
             
-            <NotesList 
-                refreshTrigger={refreshCount} 
-                onNoteDeleted={triggerRefresh}
+            <NotesList
+                notes={notes} 
+                isLoading={isLoading}
+                error={error}
+                onNoteDeleted={removeNote}
                 onEditClick={(note) => {
                     setEditingNote(note);
                     window.scrollTo(0, 0); // Smoothly scrolls back up to the form!
